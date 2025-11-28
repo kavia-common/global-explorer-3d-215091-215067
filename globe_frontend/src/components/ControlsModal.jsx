@@ -2,34 +2,39 @@ import React, { useEffect, useRef, useCallback } from 'react';
 
 /**
  * PUBLIC_INTERFACE
- * Accessible modal component used to display gesture controls.
- * - Focus trap
- * - ESC to close
- * - Close button
- * - Backdrop click to close
- * - Ocean Professional theme styling with blur and subtle shadow
+ * Accessible modal for Gesture Controls.
+ * Glass/blur backdrop, centered card with rounded-xl corners, subtle border,
+ * drop-shadow-xl, smooth open/close animations, focus trap, ESC to close,
+ * and backdrop click to close.
+ *
+ * Reference image for visual guidance:
+ * /attachments/20251128_024540_image.png
  */
-export default function ControlsModal({ open, onClose, title = 'Controls', children }) {
+export default function ControlsModal({
+  open,
+  onClose,
+  title = 'Gesture Controls',
+  subtitle = 'Interact with the globe hands-free',
+  children,
+}) {
   const dialogRef = useRef(null);
+  const closeBtnRef = useRef(null);
   const firstFocusableRef = useRef(null);
   const lastFocusableRef = useRef(null);
   const prevActive = useRef(null);
 
-  // Close handler
   const handleClose = useCallback(() => {
     onClose?.();
   }, [onClose]);
 
-  // ESC key to close and focus trap
+  // Setup focus trap and key handling
   useEffect(() => {
     if (!open) return;
 
     prevActive.current = document.activeElement;
-
     const el = dialogRef.current;
     if (!el) return;
 
-    // Gather focusable elements
     const focusableSelectors = [
       'a[href]',
       'area[href]',
@@ -41,7 +46,7 @@ export default function ControlsModal({ open, onClose, title = 'Controls', child
       'object',
       'embed',
       '[tabindex]:not([tabindex="-1"])',
-      '[contenteditable]'
+      '[contenteditable]',
     ].join(',');
 
     const setupFocus = () => {
@@ -49,7 +54,12 @@ export default function ControlsModal({ open, onClose, title = 'Controls', child
       if (focusables.length) {
         firstFocusableRef.current = focusables[0];
         lastFocusableRef.current = focusables[focusables.length - 1];
-        firstFocusableRef.current.focus();
+        // Ensure the Close button receives initial focus for quick escape
+        if (closeBtnRef.current) {
+          closeBtnRef.current.focus();
+        } else {
+          firstFocusableRef.current.focus();
+        }
       } else {
         el.focus();
       }
@@ -60,7 +70,6 @@ export default function ControlsModal({ open, onClose, title = 'Controls', child
         e.stopPropagation();
         handleClose();
       } else if (e.key === 'Tab') {
-        // Trap focus inside
         const first = firstFocusableRef.current;
         const last = lastFocusableRef.current;
         if (!first || !last) return;
@@ -82,106 +91,78 @@ export default function ControlsModal({ open, onClose, title = 'Controls', child
     setupFocus();
     document.addEventListener('keydown', onKeyDown, true);
 
+    // Add enter animation by toggling class
+    requestAnimationFrame(() => {
+      el.classList.add('controls-modal--enter');
+    });
+
     return () => {
       document.removeEventListener('keydown', onKeyDown, true);
-      // Restore focus to previous element
       if (prevActive.current && prevActive.current.focus) {
         prevActive.current.focus();
       }
     };
   }, [open, handleClose]);
 
-  if (!open) return null;
-
+  // Backdrop click closes when clicking outside of the card
   const onBackdropClick = (e) => {
-    // Only close if clicking on the backdrop, not the dialog content
     if (e.target === e.currentTarget) {
       handleClose();
     }
   };
 
+  if (!open) return null;
+
   return (
     <div
-      className="controls-modal-backdrop"
+      className="controls-modal-backdrop controls-modal-backdrop--enter"
       role="presentation"
       onMouseDown={onBackdropClick}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(2, 6, 23, 0.55)',
-        backdropFilter: 'blur(6px)',
-        WebkitBackdropFilter: 'blur(6px)',
-        zIndex: 50,
-        display: 'grid',
-        placeItems: 'center',
-        padding: '16px',
-      }}
+      aria-hidden="false"
     >
-      <div
+      <section
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="controls-modal-title"
+        aria-describedby={subtitle ? 'controls-modal-subtitle' : undefined}
         tabIndex={-1}
-        className="controls-modal"
-        style={{
-          width: '100%',
-          maxWidth: 560,
-          background: 'rgba(15, 23, 42, 0.85)',
-          border: '1px solid rgba(37, 99, 235, 0.35)',
-          boxShadow: '0 20px 50px rgba(0,0,0,0.45)',
-          color: 'var(--text)',
-          borderRadius: 16,
-          overflow: 'hidden',
-        }}
+        className="controls-modal-card"
       >
-        <div
-          className="controls-modal-header"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '12px 14px',
-            borderBottom: '1px solid rgba(148,163,184,0.2)',
-            background:
-              'linear-gradient(90deg, rgba(37, 99, 235, 0.18), rgba(148, 163, 184, 0.10))',
-          }}
-        >
-          <h2
-            id="controls-modal-title"
-            style={{
-              margin: 0,
-              fontSize: 16,
-              fontWeight: 700,
-              letterSpacing: 0.2,
-            }}
-          >
-            {title}
-          </h2>
+        <header className="controls-modal-header">
+          <div className="controls-modal-titles">
+            <h2 id="controls-modal-title" className="controls-modal-title">
+              {title}
+            </h2>
+            {subtitle ? (
+              <p id="controls-modal-subtitle" className="controls-modal-subtitle">
+                {subtitle}
+              </p>
+            ) : null}
+          </div>
           <button
             type="button"
             aria-label="Close controls"
-            className="btn"
+            className="icon-btn"
             onClick={handleClose}
-            style={{
-              padding: '6px 10px',
-              borderRadius: 10,
-              borderColor: 'rgba(37, 99, 235, 0.5)',
-            }}
+            ref={closeBtnRef}
+            title="Close"
           >
-            Close
+            <span aria-hidden="true" className="icon-x">
+              ×
+            </span>
           </button>
-        </div>
+        </header>
 
-        <div
-          className="controls-modal-content"
-          style={{
-            padding: 14,
-          }}
-        >
-          {children}
-        </div>
-      </div>
+        <div className="controls-modal-content">{children}</div>
+
+        <footer className="controls-modal-footer">
+          <div className="spacer" />
+          <button type="button" className="btn btn-primary-ghost" onClick={handleClose}>
+            Got it
+          </button>
+        </footer>
+      </section>
     </div>
   );
 }

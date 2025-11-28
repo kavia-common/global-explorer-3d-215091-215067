@@ -10,27 +10,31 @@ export default function GestureControls() {
     {
       key: 'thumbs_up',
       name: 'Thumbs Up',
+      pill: 'Enable',
       icon: '/assets/gestures/thumbs_up.png',
-      description: 'Enable gesture control. Acts like a toggle to start recognition.',
+      description: 'Toggle gesture control on.',
       accent: '#10b981',
     },
     {
       key: 'thumbs_down',
       name: 'Thumbs Down',
+      pill: 'Disable',
       icon: '/assets/gestures/thumbs_down.png',
-      description: 'Disable gesture control and pause recognition.',
+      description: 'Turn recognition off.',
       accent: '#EF4444',
     },
     {
       key: 'fist',
       name: 'Fist',
+      pill: 'Navigation',
       icon: '/assets/gestures/fist.png',
-      description: 'Hold to drag/orbit the globe surface.',
+      description: 'Hold to drag/orbit the globe.',
       accent: 'var(--color-secondary)',
     },
     {
       key: 'pinch_in',
       name: 'Pinch-In',
+      pill: 'Zoom',
       icon: '/assets/gestures/pinch_in.png',
       description: 'Pinch to zoom in/out smoothly.',
       accent: 'var(--color-primary)',
@@ -38,81 +42,50 @@ export default function GestureControls() {
     {
       key: 'rotate',
       name: 'Rotate',
+      pill: 'Rotation',
       icon: '/assets/gestures/rotate.png',
-      description: 'Twist your wrist to rotate the globe around its axis.',
+      description: 'Twist wrist to spin the globe.',
       accent: '#38bdf8',
     },
   ];
 
   return (
-    <div
-      className="gesture-grid"
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-        gap: 12,
-      }}
-    >
+    <div className="gesture-grid">
       {gestures.map((g) => (
-        <div
-          key={g.key}
-          className="gesture-card"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 12,
-            padding: 12,
-            borderRadius: 12,
-            background: 'rgba(2, 6, 23, 0.35)',
-            border: '1px solid rgba(148,163,184,0.25)',
-            boxShadow: '0 10px 24px rgba(0,0,0,0.35)',
-            minHeight: 72,
-          }}
-        >
-          <div
-            className="gesture-icon-wrap"
-            aria-hidden="true"
-            style={{
-              width: 44,
-              height: 44,
-              borderRadius: 10,
-              background:
-                'linear-gradient(180deg, rgba(148,163,184,0.15), rgba(2,6,23,0.1))',
-              border: `1px solid ${g.accent}`,
-              display: 'grid',
-              placeItems: 'center',
-              overflow: 'hidden',
-              flex: '0 0 auto',
-            }}
-          >
+        <article key={g.key} className="gesture-card" aria-label={g.name}>
+          <div className="gesture-icon-wrap" aria-hidden="true" style={{ borderColor: g.accent }}>
             <img
               src={g.icon}
               alt=""
-              width={36}
-              height={36}
-              style={{ objectFit: 'contain', filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.5))' }}
+              className="gesture-icon"
+              width={72}
+              height={72}
+              loading="lazy"
             />
           </div>
-          <div className="gesture-texts" style={{ display: 'grid', gap: 4 }}>
-            <div style={{ fontWeight: 700, letterSpacing: 0.2 }}>{g.name}</div>
-            <div style={{ fontSize: 13, color: 'var(--muted)' }}>{g.description}</div>
+          <div className="gesture-texts">
+            <div className="gesture-header">
+              <h3 className="gesture-title">{g.name}</h3>
+              {g.pill && (
+                <span
+                  className="gesture-pill"
+                  style={{
+                    background: 'rgba(245, 158, 11, 0.12)',
+                    color: '#F59E0B',
+                    borderColor: '#F59E0B',
+                  }}
+                >
+                  {g.pill}
+                </span>
+              )}
+            </div>
+            <p className="gesture-desc">{g.description}</p>
           </div>
-        </div>
+        </article>
       ))}
-      <div
-        className="gesture-note"
-        style={{
-          gridColumn: '1 / -1',
-          marginTop: 4,
-          padding: 10,
-          borderRadius: 10,
-          border: '1px dashed rgba(148,163,184,0.3)',
-          background: 'rgba(15,23,42,0.35)',
-          color: 'var(--muted)',
-          fontSize: 12,
-        }}
-      >
-        Tip: Ensure good lighting and keep your hand fully in view of your camera for best recognition accuracy.
+      <div className="gesture-note">
+        Tip: Ensure good lighting and keep your hand fully in view of your camera for best
+        recognition accuracy.
       </div>
     </div>
   );
