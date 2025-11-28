@@ -4,6 +4,7 @@ import { OrbitControls, Html, useTexture } from '@react-three/drei';
 import { XR, useXR } from '@react-three/xr';
 import * as THREE from 'three';
 import { useCountries } from '../hooks/useCountries.js';
+import HighlightLayers from './HighlightLayers.jsx';
 
 /**
  * Convert a 3D point on a unit sphere to latitude/longitude.
@@ -155,31 +156,6 @@ function Earth({ onPointerDown, sunMode }) {
   );
 }
 
-function CountryHighlight({ feature, getOutlineFor }) {
-  const lineRef = useRef();
-  const glowRef = useRef();
-
-  const geometry = useMemo(() => {
-    if (!feature) return null;
-    return getOutlineFor(feature);
-  }, [feature, getOutlineFor]);
-
-  if (!feature || !geometry) return null;
-
-  return (
-    <group>
-      {/* Outline lines */}
-      <lineSegments ref={lineRef} geometry={geometry}>
-        <lineBasicMaterial color={'#F59E0B'} linewidth={2} transparent opacity={0.95} />
-      </lineSegments>
-      {/* Subtle glow using a slightly larger, translucent mesh */}
-      <lineSegments geometry={geometry} ref={glowRef} scale={[1.005, 1.005, 1.005]}>
-        <lineBasicMaterial color={'#F59E0B'} transparent opacity={0.35} />
-      </lineSegments>
-    </group>
-  );
-}
-
 function Reticle({ position }) {
   // Small subtle reticle marker at hit point on the globe, Ocean Professional accent
   if (!position) return null;
@@ -228,6 +204,7 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
   // Countries data / hit testing
   const { loaded, error, findCountryAt, getOutlineFor } = useCountries();
   const [selected, setSelected] = useState(null);
+  const [lastHitState, setLastHitState] = useState(null);
 
   const ambient = useMemo(() => new THREE.AmbientLight(0xffffff, 0.6), []);
   const dirLight = useMemo(() => {
@@ -286,6 +263,7 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
         : null,
     };
     onHit?.(payload);
+    setLastHitState(payload);
     return true;
   }, [scene.children, loaded, error, findCountryAt, onCountrySelected, onHit]);
 
@@ -383,6 +361,12 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
     }
   });
 
+  // Prebuilt outline geometry for current selection; reused by HighlightLayers
+  const outlineGeometry = useMemo(() => {
+    if (!selected) return null;
+    return getOutlineFor(selected);
+  }, [selected, getOutlineFor]);
+
   return (
     <>
       {/* Sky background color */}
@@ -392,8 +376,15 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
           <Earth onPointerDown={handlePointerDown} sunMode={sunMode} />
         </group>
 
-        {/* Country highlight overlay */}
-        {selected && <CountryHighlight feature={selected} getOutlineFor={getOutlineFor} />}
+        {/* Country highlight overlay enhanced: fill, animated glow, and location pin */}
+        {selected && outlineGeometry && (
+          <HighlightLayers
+            feature={selected}
+            outlineGeometry={outlineGeometry}
+            lastHit={lastHitState}
+            accent="#F59E0B"
+          />
+        )}
 
         {/* VR controller rays and reticle */}
         {isPresenting && (
