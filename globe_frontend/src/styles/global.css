@@ -148,3 +148,13 @@ html, body, #app, .app-root {
   max-width: 280px;
   text-align: right;
 }
+
+/* Small responsive tweak to overlay card on narrow screens */
+@media (max-width: 480px) {
+  .overlay-card {
+    min-width: unset;
+    width: calc(100vw - 24px);
+    padding: 12px;
+    border-radius: 12px;
+  }
+}

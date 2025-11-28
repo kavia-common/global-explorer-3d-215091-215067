@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
+import ControlsModal from './ControlsModal.jsx';
+import GestureControls from './GestureControls.jsx';
 
 /**
  * Floating overlay with theme styles showing status, last hit lat/lon, and selected country.
@@ -13,10 +15,36 @@ export default function Overlay({ lastHit, experimentsEnabled, sunMode, onSunMod
    */
   const country = lastHit?.country || null;
 
+  // Controls modal state
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const openControls = useCallback(() => setControlsOpen(true), []);
+  const closeControls = useCallback(() => setControlsOpen(false), []);
+
   return (
     <div className="overlay-root">
       <div className="overlay-card">
-        <div className="overlay-title">Global Explorer</div>
+        <div
+          className="overlay-title"
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}
+        >
+          <span>Global Explorer</span>
+          <button
+            type="button"
+            className="btn"
+            onClick={openControls}
+            aria-haspopup="dialog"
+            aria-expanded={controlsOpen}
+            aria-controls="controls-modal"
+            title="View gesture controls"
+            style={{
+              padding: '6px 10px',
+              borderRadius: 10,
+              borderColor: 'rgba(37, 99, 235, 0.5)',
+            }}
+          >
+            Controls
+          </button>
+        </div>
         <div className="overlay-row">
           <span className="label">Experiments:</span>
           <span className={`pill ${experimentsEnabled ? 'ok' : 'warn'}`}>
@@ -76,6 +104,16 @@ export default function Overlay({ lastHit, experimentsEnabled, sunMode, onSunMod
           </ul>
         </div>
       </div>
+
+      {/* Modal mounted at root overlay to avoid z-index issues */}
+      <ControlsModal
+        open={controlsOpen}
+        onClose={closeControls}
+        title="Gesture Controls"
+      >
+        <div id="controls-modal" />
+        <GestureControls />
+      </ControlsModal>
     </div>
   );
 }
