@@ -19,13 +19,21 @@ export default function VRToggle({ enabled, xrSupported }) {
       setMessage('Experiments disabled. Set VITE_EXPERIMENTS_ENABLED=true to try VR.');
       return;
     }
-    if (!xrSupported || !navigator.xr) {
+    const xr = globalThis?.navigator?.xr;
+    if (!xrSupported || !xr) {
       setMessage('WebXR not supported on this device/browser.');
       return;
     }
+    if (!gl || !gl.xr) {
+      setMessage('Renderer not ready yet. Please try again in a moment.');
+      return;
+    }
     try {
-      // three.js renderer exposes xr; request immersive-vr
-      await gl.xr.setSession(await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor'] }));
+      // Enable XR on the renderer if not already.
+      gl.xr.enabled = true;
+      const session = await xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor'] });
+      // r3f/three manages session lifecycle; setSession is available via three's WebXRManager.
+      await gl.xr.setSession(session);
       setMessage('Entering VR… If nothing happens, ensure HTTPS, a compatible XR device, and grant permissions.');
     } catch (e) {
       setMessage('Failed to start VR session. Check browser permissions and HTTPS.');

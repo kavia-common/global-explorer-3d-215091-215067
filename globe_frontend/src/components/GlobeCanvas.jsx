@@ -136,14 +136,11 @@ function Earth({ onPointerDown, sunMode }) {
   // Update sunDirection each frame
   useFrame(({ clock }) => {
     const t = clock.getElapsedTime();
-    // Real-time: a slow orbit around Y axis to simulate day-night cycle
     if (sunMode === 'real') {
-      const speed = 0.05; // radians per second
+      const speed = 0.05;
       const a = t * speed;
-      // Sun orbiting around equatorial plane
       uniforms.uSunDir.value.set(Math.cos(a), 0.2, Math.sin(a)).normalize();
     } else {
-      // Fixed: gentle angled direction
       uniforms.uSunDir.value.set(1, 0.2, 0.6).normalize();
     }
     uniforms.uTime.value = t;
@@ -158,7 +155,6 @@ function Earth({ onPointerDown, sunMode }) {
 }
 
 function Reticle({ position }) {
-  // Small subtle reticle marker at hit point on the globe, Ocean Professional accent
   if (!position) return null;
   return (
     <mesh position={position}>
@@ -169,14 +165,9 @@ function Reticle({ position }) {
 }
 
 function ControllerRay({ controller }) {
-  // Draw a thin ray from controller forward
   const ref = useRef();
   useFrame(() => {
     if (!controller?.controller?.visible) return;
-    // The ray is always visible when controller exists; length handled externally
-    if (ref.current) {
-      // nothing per frame here; geometry static
-    }
   });
   return (
     <line ref={ref}>
@@ -199,7 +190,7 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
   const pointerRef = useRef(new THREE.Vector2());
   const earthRef = useRef();
 
-  // XR hooks
+  // XR hooks (safe: only active if wrapped in <XR>)
   const { isPresenting, inputSources } = useXR();
 
   // Gesture WebSocket
@@ -226,12 +217,13 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
     };
   }, [scene, ambient, dirLight]);
 
-  // XR support check
+  // XR support check with guard for non-WebXR environments
   useEffect(() => {
-    if (navigator.xr && navigator.xr.isSessionSupported) {
-      navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
-        onXRSupport?.(supported);
-      }).catch(() => onXRSupport?.(false));
+    const xr = globalThis?.navigator?.xr;
+    if (xr && typeof xr.isSessionSupported === 'function') {
+      xr.isSessionSupported('immersive-vr')
+        .then((supported) => onXRSupport?.(!!supported))
+        .catch(() => onXRSupport?.(false));
     } else {
       onXRSupport?.(false);
     }
@@ -240,7 +232,6 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
   // Shared selection computation from a ray (origin, direction)
   const computeSelectionFromRay = useCallback((ray) => {
     if (!ray) return false;
-    // Intersect with scene; prefer Earth sphere
     raycasterRef.current.ray.copy(ray);
     const intersects = raycasterRef.current.intersectObjects(scene.children, true);
     if (!intersects.length) return false;
@@ -271,7 +262,7 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
     return true;
   }, [scene.children, loaded, error, findCountryAt, onCountrySelected, onHit]);
 
-  // Click handler (raycast) to compute lat/lon and country selection (desktop)
+  // Click handler (desktop)
   const handlePointerDown = (e) => {
     e.stopPropagation();
 
@@ -288,41 +279,35 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
   const [reticlePos, setReticlePos] = useState(null);
   const tmpRay = useMemo(() => new THREE.Ray(), []);
   const tmpDir = useMemo(() => new THREE.Vector3(), []);
-  const tmpMat = useMemo(() => new THREE.Matrix4(), []);
   const tmpPos = useMemo(() => new THREE.Vector3(), []);
 
   // Orbit controls reference for manual control
   const orbitRef = useRef(null);
 
-  // On each frame in VR, update a reticle where the controller is pointing (nearest intersection with sphere)
+  // Update controller reticle each frame while presenting
   useFrame(() => {
     if (!isPresenting) {
       if (reticlePos) setReticlePos(null);
       return;
     }
-    // Pick a controller source (prefer right-handed)
     const ctrl = inputSources.find((s) => s.handedness === 'right') || inputSources[0];
     if (!ctrl?.object) {
       if (reticlePos) setReticlePos(null);
       return;
     }
 
-    // Build a ray from controller
     const obj = ctrl.object;
-    // Controller forward in world space
     tmpDir.set(0, 0, -1).applyQuaternion(obj.quaternion).normalize();
     tmpPos.copy(obj.position);
 
     tmpRay.origin.copy(tmpPos);
     tmpRay.direction.copy(tmpDir);
 
-    // Intersect with scene for reticle; prefer globe sphere
     raycasterRef.current.ray.copy(tmpRay);
     const intersects = raycasterRef.current.intersectObjects(scene.children, true);
     if (intersects.length) {
       const hit = intersects.find((i) => i.object.geometry?.type === 'SphereGeometry') || intersects[0];
       if (hit?.point) {
-        // Update reticle position without allocating
         if (!reticlePos || !reticlePos.equals(hit.point)) {
           setReticlePos(hit.point.clone());
         }
@@ -332,12 +317,11 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
     if (reticlePos) setReticlePos(null);
   });
 
-  // Handle controller primary select (trigger) to pick country
+  // Handle controller primary select (trigger)
   useEffect(() => {
     if (!isPresenting || !inputSources?.length) return;
 
     const onSelect = (ev) => {
-      // Prefer right-handed, otherwise use the source from the event if available
       const src = inputSources.find((s) => s.handedness === 'right') || ev?.target || inputSources[0];
       const obj = src?.object;
       if (!obj) return;
@@ -349,7 +333,6 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
       computeSelectionFromRay(tmpRay);
     };
 
-    // Attach to all input sources objects if possible
     inputSources.forEach((s) => {
       s.object?.addEventListener?.('select', onSelect);
     });
@@ -361,28 +344,23 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
     };
   }, [isPresenting, inputSources, computeSelectionFromRay, tmpDir, tmpPos, tmpRay]);
 
-  // Animate slight rotation (world rotation, shader uses world normals for consistent terminator)
+  // Slight rotation animation
   useFrame((_state, delta) => {
     if (earthRef.current) {
       earthRef.current.rotation.y += delta * 0.02;
     }
   });
 
-  // Process gesture buffer each frame; apply to camera/orbit controls in a frame-safe manner
+  // Consume gesture buffer each frame
   useFrame((_state, delta) => {
     const buf = gestureStateRef.current.buffer;
     if (!buf || buf.length === 0) return;
 
-    // Smooth zoom helpers
     const applyZoomDelta = (dz) => {
-      // prefer OrbitControls when not in VR (to avoid selection conflicts). In VR we still allow zoom.
       const cam = camera;
-      // Zoom by moving camera along its forward vector toward/away from origin
       const forward = new THREE.Vector3();
       cam.getWorldDirection(forward);
-      // Negative dz means zoom out
       cam.position.addScaledVector(forward, dz);
-      // Clamp distance to [min, max] similar to controls
       const dist = cam.position.length();
       const min = 1.3;
       const max = 5.0;
@@ -390,13 +368,10 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
       if (dist > max) cam.position.setLength(max);
     };
 
-    // Rotate (orbit) helpers
     const applyOrbitDelta = (dyaw, dpitch) => {
-      // Adjust spherical angles around origin
       const pos = camera.position.clone();
       const sph = new THREE.Spherical();
       sph.setFromVector3(pos);
-      // yaw around Y is azimuthal angle (theta), pitch affects polar angle (phi)
       sph.theta += dyaw;
       sph.phi = Math.min(Math.max(0.01, sph.phi + dpitch), Math.PI - 0.01);
       const newPos = new THREE.Vector3().setFromSpherical(sph);
@@ -406,39 +381,26 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
 
     for (let i = 0; i < buf.length; i++) {
       const { name, phase, data } = buf[i];
-
-      // Map gestures to actions:
-      // thumbs_up.start|hold => zoom in step (smooth)
-      // thumbs_down.start|hold => zoom out step (smooth)
-      // pinch_in.start|hold => zoom in proportional to score/zoom_factor
-      // fist.start => quick zoom out nudge
-      // rotate => adjust orbit based on pitch/yaw
       if (name === 'thumbs_up' && (phase === 'start' || phase === 'hold')) {
-        applyZoomDelta(-0.06); // move closer
+        applyZoomDelta(-0.06);
       } else if (name === 'thumbs_down' && (phase === 'start' || phase === 'hold')) {
-        applyZoomDelta(0.06); // move away
+        applyZoomDelta(0.06);
       } else if (name === 'pinch_in' && (phase === 'start' || phase === 'hold')) {
         const factor = typeof data?.zoom_factor === 'number' ? data.zoom_factor : (typeof data?.score === 'number' ? data.score : 0.5);
-        // zoom_factor: larger means stronger zoom-in; scale into small step
         const step = -0.12 * Math.max(0.1, Math.min(1.0, factor));
         applyZoomDelta(step);
       } else if (name === 'fist' && phase === 'start') {
-        applyZoomDelta(0.15); // quick nudge out
+        applyZoomDelta(0.15);
       } else if (name === 'rotate') {
-        // server should throttle this; we apply small deltas
-        const yaw = typeof data?.yaw === 'number' ? data.yaw : 0;     // radians or degrees?
+        const yaw = typeof data?.yaw === 'number' ? data.yaw : 0;
         const pitch = typeof data?.pitch === 'number' ? data.pitch : 0;
-        // Assume incoming in radians; clamp scale
-        const scale = 0.4; // sensitivity scale
+        const scale = 0.4;
         applyOrbitDelta(yaw * scale * delta, pitch * scale * delta);
       }
     }
-
-    // clear processed buffer
     buf.length = 0;
   });
 
-  // Prebuilt outline geometry for current selection; reused by HighlightLayers
   const outlineGeometry = useMemo(() => {
     if (!selected) return null;
     return getOutlineFor(selected);
@@ -446,14 +408,12 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
 
   return (
     <>
-      {/* Sky background color */}
       <color attach="background" args={['#0b1220']} />
       <group>
         <group ref={earthRef}>
           <Earth onPointerDown={handlePointerDown} sunMode={sunMode} />
         </group>
 
-        {/* Country highlight overlay enhanced: fill, animated glow, and location pin */}
         {selected && outlineGeometry && (
           <HighlightLayers
             feature={selected}
@@ -463,7 +423,6 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
           />
         )}
 
-        {/* VR controller rays and reticle */}
         {isPresenting && (
           <>
             {inputSources?.map((s, idx) =>
@@ -478,7 +437,6 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
         )}
       </group>
 
-      {/* Keep desktop controls when not in VR */}
       {!isPresenting && (
         <OrbitControls
           ref={orbitRef}
@@ -499,30 +457,58 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
 
 /**
 * Canvas container with WebXR wrapper. Exposes onHit and onXRSupport callbacks.
+* We render <XR> only after Canvas mounts and the renderer (gl) exists, to avoid undefined renderer errors.
 */
 export default function GlobeCanvas({ onHit, onXRSupport, sunMode = 'real' }) {
-  const [selectedCountry, setSelectedCountry] = useState(null);
+  const [glReady, setGlReady] = useState(false);
+  const [xrAvailable, setXrAvailable] = useState(false);
 
+  // Runtime guard for XR availability
+  useEffect(() => {
+    const xr = globalThis?.navigator?.xr;
+    setXrAvailable(!!xr);
+  }, []);
+
+  const onCreated = useCallback((state) => {
+    // state.gl is guaranteed here
+    const r = state?.gl;
+    // Enable XR only if available and renderer exists
+    if (r && r.xr) {
+      // react-three-fiber manages WebXR via THREE.WebGLRenderer; do not call setWebXRManager manually.
+      r.xr.enabled = !!xrAvailable;
+    }
+    // Mark renderer ready so we can safely wrap with XR
+    setGlReady(true);
+  }, [xrAvailable]);
+
+  // Render Canvas; wrap contents with XR after renderer is ready. This avoids calling XR manager on undefined gl.
   return (
     <div className="canvas-wrap" aria-label="3D globe canvas">
-      {/* XR wrapper enables WebXR; session will be started via button in VRToggle */}
-      <XR>
-        <Canvas
-          shadows
-          dpr={[1, 2]}
-          camera={{ fov: 45, position: [0, 1.2, 2.2] }}
-          resize={{ scroll: false, debounce: { scroll: 50, resize: 0 } }}
-        >
+      <Canvas
+        shadows
+        dpr={[1, 2]}
+        camera={{ fov: 45, position: [0, 1.2, 2.2] }}
+        resize={{ scroll: false, debounce: { scroll: 50, resize: 0 } }}
+        onCreated={onCreated}
+      >
+        {glReady && xrAvailable ? (
+          <XR>
+            <SceneContent
+              onHit={onHit}
+              onXRSupport={onXRSupport}
+              onCountrySelected={() => {}}
+              sunMode={sunMode}
+            />
+          </XR>
+        ) : (
           <SceneContent
             onHit={onHit}
             onXRSupport={onXRSupport}
-            onCountrySelected={(f) => {
-              setSelectedCountry(f);
-            }}
+            onCountrySelected={() => {}}
             sunMode={sunMode}
           />
-        </Canvas>
-      </XR>
+        )}
+      </Canvas>
     </div>
   );
 }
