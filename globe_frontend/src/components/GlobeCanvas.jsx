@@ -222,9 +222,16 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
     const xr = globalThis?.navigator?.xr;
     if (xr && typeof xr.isSessionSupported === 'function') {
       xr.isSessionSupported('immersive-vr')
-        .then((supported) => onXRSupport?.(!!supported))
-        .catch(() => onXRSupport?.(false));
+        .then((supported) => {
+          console.info('[XR] isSessionSupported(immersive-vr):', !!supported);
+          onXRSupport?.(!!supported);
+        })
+        .catch((err) => {
+          console.info('[XR] capability check failed:', err);
+          onXRSupport?.(false);
+        });
     } else {
+      console.info('[XR] navigator.xr not available; disabling XR features.');
       onXRSupport?.(false);
     }
   }, [onXRSupport]);
@@ -266,7 +273,8 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
   const handlePointerDown = (e) => {
     e.stopPropagation();
 
-    const canvas = gl.domElement;
+    const canvas = gl?.domElement;
+    if (!canvas) return; // guard if renderer not ready
     const rect = canvas.getBoundingClientRect();
     pointerRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     pointerRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
@@ -461,27 +469,54 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
 */
 export default function GlobeCanvas({ onHit, onXRSupport, sunMode = 'real' }) {
   const [glReady, setGlReady] = useState(false);
-  const [xrAvailable, setXrAvailable] = useState(false);
+  const [xrCapability, setXrCapability] = useState(false); // async capability flag
+  const mountedRef = useRef(true);
 
-  // Runtime guard for XR availability
+  // Strict async capability check: navigator.xr + immersive-vr support
   useEffect(() => {
-    const xr = globalThis?.navigator?.xr;
-    setXrAvailable(!!xr);
-  }, []);
+    mountedRef.current = true;
+    const check = async () => {
+      try {
+        const nav = globalThis?.navigator;
+        const xr = nav?.xr;
+        if (!xr || typeof xr.isSessionSupported !== 'function') {
+          console.info('[XR] navigator.xr not present or missing isSessionSupported');
+          if (mountedRef.current) setXrCapability(false);
+          onXRSupport?.(false);
+          return;
+        }
+        const supported = await xr.isSessionSupported('immersive-vr');
+        console.info('[XR] immersive-vr supported:', !!supported);
+        if (mountedRef.current) setXrCapability(!!supported);
+        onXRSupport?.(!!supported);
+      } catch (err) {
+        console.info('[XR] capability check threw; treating as unsupported:', err);
+        if (mountedRef.current) setXrCapability(false);
+        onXRSupport?.(false);
+      }
+    };
+    check();
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [onXRSupport]);
 
   const onCreated = useCallback((state) => {
-    // state.gl is guaranteed here
-    const r = state?.gl;
-    // Enable XR only if available and renderer exists
-    if (r && r.xr) {
-      // react-three-fiber manages WebXR via THREE.WebGLRenderer; do not call setWebXRManager manually.
-      r.xr.enabled = !!xrAvailable;
+    const renderer = state?.gl;
+    // Never touch renderer.xr unless renderer exists
+    if (renderer?.xr) {
+      // Enable only if capability is true
+      renderer.xr.enabled = !!xrCapability;
+      console.info('[XR] renderer.xr.enabled set to', !!xrCapability);
+    } else {
+      console.info('[XR] renderer not ready or missing xr manager; skipping enable.');
     }
-    // Mark renderer ready so we can safely wrap with XR
     setGlReady(true);
-  }, [xrAvailable]);
+  }, [xrCapability]);
 
-  // Render Canvas; wrap contents with XR after renderer is ready. This avoids calling XR manager on undefined gl.
+  // Render Canvas; only wrap with <XR> when both renderer is ready and capability is confirmed true.
+  const shouldUseXR = glReady && xrCapability;
+
   return (
     <div className="canvas-wrap" aria-label="3D globe canvas">
       <Canvas
@@ -491,7 +526,7 @@ export default function GlobeCanvas({ onHit, onXRSupport, sunMode = 'real' }) {
         resize={{ scroll: false, debounce: { scroll: 50, resize: 0 } }}
         onCreated={onCreated}
       >
-        {glReady && xrAvailable ? (
+        {shouldUseXR ? (
           <XR>
             <SceneContent
               onHit={onHit}
