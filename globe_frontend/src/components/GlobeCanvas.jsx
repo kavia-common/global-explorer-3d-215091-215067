@@ -5,6 +5,7 @@ import { XR, useXR } from '@react-three/xr';
 import * as THREE from 'three';
 import { useCountries } from '../hooks/useCountries.js';
 import HighlightLayers from './HighlightLayers.jsx';
+import useGestureWS from '../hooks/useGestureWS.js';
 
 /**
  * Convert a 3D point on a unit sphere to latitude/longitude.
@@ -201,6 +202,9 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
   // XR hooks
   const { isPresenting, inputSources } = useXR();
 
+  // Gesture WebSocket
+  const { gestureStateRef } = useGestureWS({ enabledDefault: true });
+
   // Countries data / hit testing
   const { loaded, error, findCountryAt, getOutlineFor } = useCountries();
   const [selected, setSelected] = useState(null);
@@ -287,6 +291,9 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
   const tmpMat = useMemo(() => new THREE.Matrix4(), []);
   const tmpPos = useMemo(() => new THREE.Vector3(), []);
 
+  // Orbit controls reference for manual control
+  const orbitRef = useRef(null);
+
   // On each frame in VR, update a reticle where the controller is pointing (nearest intersection with sphere)
   useFrame(() => {
     if (!isPresenting) {
@@ -361,6 +368,76 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
     }
   });
 
+  // Process gesture buffer each frame; apply to camera/orbit controls in a frame-safe manner
+  useFrame((_state, delta) => {
+    const buf = gestureStateRef.current.buffer;
+    if (!buf || buf.length === 0) return;
+
+    // Smooth zoom helpers
+    const applyZoomDelta = (dz) => {
+      // prefer OrbitControls when not in VR (to avoid selection conflicts). In VR we still allow zoom.
+      const cam = camera;
+      // Zoom by moving camera along its forward vector toward/away from origin
+      const forward = new THREE.Vector3();
+      cam.getWorldDirection(forward);
+      // Negative dz means zoom out
+      cam.position.addScaledVector(forward, dz);
+      // Clamp distance to [min, max] similar to controls
+      const dist = cam.position.length();
+      const min = 1.3;
+      const max = 5.0;
+      if (dist < min) cam.position.setLength(min);
+      if (dist > max) cam.position.setLength(max);
+    };
+
+    // Rotate (orbit) helpers
+    const applyOrbitDelta = (dyaw, dpitch) => {
+      // Adjust spherical angles around origin
+      const pos = camera.position.clone();
+      const sph = new THREE.Spherical();
+      sph.setFromVector3(pos);
+      // yaw around Y is azimuthal angle (theta), pitch affects polar angle (phi)
+      sph.theta += dyaw;
+      sph.phi = Math.min(Math.max(0.01, sph.phi + dpitch), Math.PI - 0.01);
+      const newPos = new THREE.Vector3().setFromSpherical(sph);
+      camera.position.copy(newPos);
+      camera.lookAt(0, 0, 0);
+    };
+
+    for (let i = 0; i < buf.length; i++) {
+      const { name, phase, data } = buf[i];
+
+      // Map gestures to actions:
+      // thumbs_up.start|hold => zoom in step (smooth)
+      // thumbs_down.start|hold => zoom out step (smooth)
+      // pinch_in.start|hold => zoom in proportional to score/zoom_factor
+      // fist.start => quick zoom out nudge
+      // rotate => adjust orbit based on pitch/yaw
+      if (name === 'thumbs_up' && (phase === 'start' || phase === 'hold')) {
+        applyZoomDelta(-0.06); // move closer
+      } else if (name === 'thumbs_down' && (phase === 'start' || phase === 'hold')) {
+        applyZoomDelta(0.06); // move away
+      } else if (name === 'pinch_in' && (phase === 'start' || phase === 'hold')) {
+        const factor = typeof data?.zoom_factor === 'number' ? data.zoom_factor : (typeof data?.score === 'number' ? data.score : 0.5);
+        // zoom_factor: larger means stronger zoom-in; scale into small step
+        const step = -0.12 * Math.max(0.1, Math.min(1.0, factor));
+        applyZoomDelta(step);
+      } else if (name === 'fist' && phase === 'start') {
+        applyZoomDelta(0.15); // quick nudge out
+      } else if (name === 'rotate') {
+        // server should throttle this; we apply small deltas
+        const yaw = typeof data?.yaw === 'number' ? data.yaw : 0;     // radians or degrees?
+        const pitch = typeof data?.pitch === 'number' ? data.pitch : 0;
+        // Assume incoming in radians; clamp scale
+        const scale = 0.4; // sensitivity scale
+        applyOrbitDelta(yaw * scale * delta, pitch * scale * delta);
+      }
+    }
+
+    // clear processed buffer
+    buf.length = 0;
+  });
+
   // Prebuilt outline geometry for current selection; reused by HighlightLayers
   const outlineGeometry = useMemo(() => {
     if (!selected) return null;
@@ -404,6 +481,7 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
       {/* Keep desktop controls when not in VR */}
       {!isPresenting && (
         <OrbitControls
+          ref={orbitRef}
           enableDamping
           dampingFactor={0.05}
           rotateSpeed={0.5}
