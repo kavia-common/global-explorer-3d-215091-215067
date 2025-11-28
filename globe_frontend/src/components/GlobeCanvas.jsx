@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Html, useTexture } from '@react-three/drei';
-import { XR } from '@react-three/xr';
+import { XR, useXR } from '@react-three/xr';
 import * as THREE from 'three';
 import { useCountries } from '../hooks/useCountries.js';
 
@@ -180,11 +180,50 @@ function CountryHighlight({ feature, getOutlineFor }) {
   );
 }
 
+function Reticle({ position }) {
+  // Small subtle reticle marker at hit point on the globe, Ocean Professional accent
+  if (!position) return null;
+  return (
+    <mesh position={position}>
+      <sphereGeometry args={[0.008, 16, 16]} />
+      <meshBasicMaterial color={'#F59E0B'} transparent opacity={0.9} />
+    </mesh>
+  );
+}
+
+function ControllerRay({ controller }) {
+  // Draw a thin ray from controller forward
+  const ref = useRef();
+  useFrame(() => {
+    if (!controller?.controller?.visible) return;
+    // The ray is always visible when controller exists; length handled externally
+    if (ref.current) {
+      // nothing per frame here; geometry static
+    }
+  });
+  return (
+    <line ref={ref}>
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          array={new Float32Array([0, 0, 0, 0, 0, -1.5])}
+          count={2}
+          itemSize={3}
+        />
+      </bufferGeometry>
+      <lineBasicMaterial color={'#F59E0B'} linewidth={1} transparent opacity={0.7} />
+    </line>
+  );
+}
+
 function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
   const { camera, gl, scene } = useThree();
   const raycasterRef = useRef(new THREE.Raycaster());
   const pointerRef = useRef(new THREE.Vector2());
   const earthRef = useRef();
+
+  // XR hooks
+  const { isPresenting, inputSources } = useXR();
 
   // Countries data / hit testing
   const { loaded, error, findCountryAt, getOutlineFor } = useCountries();
@@ -217,7 +256,40 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
     }
   }, [onXRSupport]);
 
-  // Click handler (raycast) to compute lat/lon and country selection
+  // Shared selection computation from a ray (origin, direction)
+  const computeSelectionFromRay = useCallback((ray) => {
+    if (!ray) return false;
+    // Intersect with scene; prefer Earth sphere
+    raycasterRef.current.ray.copy(ray);
+    const intersects = raycasterRef.current.intersectObjects(scene.children, true);
+    if (!intersects.length) return false;
+
+    const hit = intersects.find((i) => i.object.geometry?.type === 'SphereGeometry') || intersects[0];
+    if (!hit?.point) return false;
+
+    const { lat, lon } = vectorToLatLon(hit.point);
+    const rounded = { lat: Number(lat.toFixed(4)), lon: Number(lon.toFixed(4)) };
+
+    let f = null;
+    if (loaded && !error) {
+      f = findCountryAt(rounded.lat, rounded.lon);
+      setSelected(f || null);
+      onCountrySelected?.(f || null);
+    }
+    const payload = {
+      ...rounded,
+      country: f
+        ? {
+            name: f.properties?.NAME_EN || f.properties?.ADMIN || 'Unknown',
+            iso: f.properties?.ISO_A3 || '—',
+          }
+        : null,
+    };
+    onHit?.(payload);
+    return true;
+  }, [scene.children, loaded, error, findCountryAt, onCountrySelected, onHit]);
+
+  // Click handler (raycast) to compute lat/lon and country selection (desktop)
   const handlePointerDown = (e) => {
     e.stopPropagation();
 
@@ -227,37 +299,82 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
     pointerRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
     raycasterRef.current.setFromCamera(pointerRef.current, camera);
+    computeSelectionFromRay(raycasterRef.current.ray);
+  };
+
+  // Reticle state (VR)
+  const [reticlePos, setReticlePos] = useState(null);
+  const tmpRay = useMemo(() => new THREE.Ray(), []);
+  const tmpDir = useMemo(() => new THREE.Vector3(), []);
+  const tmpMat = useMemo(() => new THREE.Matrix4(), []);
+  const tmpPos = useMemo(() => new THREE.Vector3(), []);
+
+  // On each frame in VR, update a reticle where the controller is pointing (nearest intersection with sphere)
+  useFrame(() => {
+    if (!isPresenting) {
+      if (reticlePos) setReticlePos(null);
+      return;
+    }
+    // Pick a controller source (prefer right-handed)
+    const ctrl = inputSources.find((s) => s.handedness === 'right') || inputSources[0];
+    if (!ctrl?.object) {
+      if (reticlePos) setReticlePos(null);
+      return;
+    }
+
+    // Build a ray from controller
+    const obj = ctrl.object;
+    // Controller forward in world space
+    tmpDir.set(0, 0, -1).applyQuaternion(obj.quaternion).normalize();
+    tmpPos.copy(obj.position);
+
+    tmpRay.origin.copy(tmpPos);
+    tmpRay.direction.copy(tmpDir);
+
+    // Intersect with scene for reticle; prefer globe sphere
+    raycasterRef.current.ray.copy(tmpRay);
     const intersects = raycasterRef.current.intersectObjects(scene.children, true);
-
-    if (intersects.length > 0) {
-      // Prefer the earth sphere
+    if (intersects.length) {
       const hit = intersects.find((i) => i.object.geometry?.type === 'SphereGeometry') || intersects[0];
-      if (hit && hit.point) {
-        const { lat, lon } = vectorToLatLon(hit.point);
-        const rounded = { lat: Number(lat.toFixed(4)), lon: Number(lon.toFixed(4)) };
-
-        // Country lookup
-        let f = null;
-        if (loaded && !error) {
-          f = findCountryAt(rounded.lat, rounded.lon);
-          setSelected(f || null);
-          onCountrySelected?.(f || null);
+      if (hit?.point) {
+        // Update reticle position without allocating
+        if (!reticlePos || !reticlePos.equals(hit.point)) {
+          setReticlePos(hit.point.clone());
         }
-
-        // Emit to parent with country info (name/iso) if available
-        const payload = {
-          ...rounded,
-          country: f
-            ? {
-                name: f.properties?.NAME_EN || f.properties?.ADMIN || 'Unknown',
-                iso: f.properties?.ISO_A3 || '—',
-              }
-            : null,
-        };
-        onHit?.(payload);
+        return;
       }
     }
-  };
+    if (reticlePos) setReticlePos(null);
+  });
+
+  // Handle controller primary select (trigger) to pick country
+  useEffect(() => {
+    if (!isPresenting || !inputSources?.length) return;
+
+    const onSelect = (ev) => {
+      // Prefer right-handed, otherwise use the source from the event if available
+      const src = inputSources.find((s) => s.handedness === 'right') || ev?.target || inputSources[0];
+      const obj = src?.object;
+      if (!obj) return;
+
+      tmpDir.set(0, 0, -1).applyQuaternion(obj.quaternion).normalize();
+      tmpPos.copy(obj.position);
+      tmpRay.origin.copy(tmpPos);
+      tmpRay.direction.copy(tmpDir);
+      computeSelectionFromRay(tmpRay);
+    };
+
+    // Attach to all input sources objects if possible
+    inputSources.forEach((s) => {
+      s.object?.addEventListener?.('select', onSelect);
+    });
+
+    return () => {
+      inputSources.forEach((s) => {
+        s.object?.removeEventListener?.('select', onSelect);
+      });
+    };
+  }, [isPresenting, inputSources, computeSelectionFromRay, tmpDir, tmpPos, tmpRay]);
 
   // Animate slight rotation (world rotation, shader uses world normals for consistent terminator)
   useFrame((_state, delta) => {
@@ -277,18 +394,35 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
 
         {/* Country highlight overlay */}
         {selected && <CountryHighlight feature={selected} getOutlineFor={getOutlineFor} />}
+
+        {/* VR controller rays and reticle */}
+        {isPresenting && (
+          <>
+            {inputSources?.map((s, idx) =>
+              s.object ? (
+                <group key={idx} position={s.object.position} quaternion={s.object.quaternion}>
+                  <ControllerRay controller={s} />
+                </group>
+              ) : null
+            )}
+            <Reticle position={reticlePos} />
+          </>
+        )}
       </group>
 
-      <OrbitControls
-        enableDamping
-        dampingFactor={0.05}
-        rotateSpeed={0.5}
-        zoomSpeed={0.6}
-        maxDistance={5}
-        minDistance={1.3}
-      />
+      {/* Keep desktop controls when not in VR */}
+      {!isPresenting && (
+        <OrbitControls
+          enableDamping
+          dampingFactor={0.05}
+          rotateSpeed={0.5}
+          zoomSpeed={0.6}
+          maxDistance={5}
+          minDistance={1.3}
+        />
+      )}
       <Html position={[0, -1.4, 0]} center distanceFactor={16} style={{ color: 'white', opacity: 0.6 }}>
-        Drag to orbit • Scroll to zoom • Click to select a country
+        {isPresenting ? 'Point a controller ray and press trigger to select a country' : 'Drag to orbit • Scroll to zoom • Click to select a country'}
       </Html>
     </>
   );
@@ -297,7 +431,6 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
 /**
 * Canvas container with WebXR wrapper. Exposes onHit and onXRSupport callbacks.
 */
-// PUBLIC_INTERFACE
 export default function GlobeCanvas({ onHit, onXRSupport, sunMode = 'real' }) {
   const [selectedCountry, setSelectedCountry] = useState(null);
 

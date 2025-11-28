@@ -26,7 +26,7 @@ export default function VRToggle({ enabled, xrSupported }) {
     try {
       // three.js renderer exposes xr; request immersive-vr
       await gl.xr.setSession(await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor'] }));
-      setMessage('Entering VR… If nothing happens, ensure HTTPS and XR device.');
+      setMessage('Entering VR… If nothing happens, ensure HTTPS, a compatible XR device, and grant permissions.');
     } catch (e) {
       setMessage('Failed to start VR session. Check browser permissions and HTTPS.');
     }
