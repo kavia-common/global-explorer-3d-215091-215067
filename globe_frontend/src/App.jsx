@@ -14,15 +14,21 @@ export default function App() {
   const [lastHit, setLastHit] = useState(null);
   const [xrSupported, setXrSupported] = useState(false);
 
+  // Sun mode: 'real' (time-driven) or 'fixed' (static direction)
+  const [sunMode, setSunMode] = useState('real');
+
   return (
     <div className="app-root">
       <GlobeCanvas
         onHit={(hit) => setLastHit(hit)}
         onXRSupport={(supported) => setXrSupported(supported)}
+        sunMode={sunMode}
       />
       <Overlay
         lastHit={lastHit}
         experimentsEnabled={experimentsEnabled}
+        sunMode={sunMode}
+        onSunModeChange={setSunMode}
       />
       <VRToggle
         enabled={experimentsEnabled}

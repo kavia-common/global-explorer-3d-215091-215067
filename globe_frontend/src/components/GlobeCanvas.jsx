@@ -15,24 +15,142 @@ function vectorToLatLon(v) {
   return { lat, lon };
 }
 
-function Earth({ onPointerDown }) {
-  // Placeholder Earth texture - using a basic color if texture fetch fails.
-  const textureUrl = 'https://raw.githubusercontent.com/trekview/earth-assets/main/textures/8k_earth_daymap.jpg';
-  const [earthTexture] = useTexture([textureUrl], (tex) => {
+/**
+ * Build a custom shader material for Earth with day/night terminator and optional city lights.
+ * We compute N (normal) in world space and dot with sunDir for light factor.
+ */
+function useEarthShaderMaterial(dayMap, nightMap) {
+  const materialRef = useRef();
+
+  const uniforms = useMemo(
+    () => ({
+      uSunDir: { value: new THREE.Vector3(1, 0, 0) }, // world-space sun direction (normalized)
+      uNightDim: { value: 0.35 }, // base dim level for night side
+      uSoftness: { value: 0.15 }, // smoothstep width for terminator
+      uUseNightTex: { value: nightMap ? 1.0 : 0.0 },
+      uTime: { value: 0.0 },
+      map: { value: dayMap || null },
+      uNightTex: { value: nightMap || null },
+    }),
+    [dayMap, nightMap]
+  );
+
+  // Shader chunks: basic lambertian day, dim night, optional nightTex blend on night side.
+  const vertexShader = `
+    varying vec3 vWorldNormal;
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      // world-space normal
+      vWorldNormal = normalize(mat3(modelMatrix) * normal);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `;
+
+  const fragmentShader = `
+    uniform vec3 uSunDir;
+    uniform float uNightDim;
+    uniform float uSoftness;
+    uniform float uUseNightTex;
+    uniform sampler2D uNightTex;
+    uniform sampler2D map;
+    varying vec3 vWorldNormal;
+    varying vec2 vUv;
+
+    // Smoothstep-like soft terminator between day and night
+    float softTerminator(float ndotl, float k) {
+      float x = clamp((ndotl + k) / (2.0 * k), 0.0, 1.0);
+      return smoothstep(0.0, 1.0, x);
+    }
+
+    void main() {
+      // base albedo from day texture or fallback color
+      vec4 dayColor = texture2D(map, vUv);
+      if (dayColor.a == 0.0) {
+        dayColor = vec4(0.231, 0.510, 0.965, 1.0); // fallback blue-ish
+      }
+
+      float ndotl = dot(normalize(vWorldNormal), normalize(uSunDir)); // [-1..1]
+      float daylight = softTerminator(ndotl, max(0.001, uSoftness)); // [0..1], 0=night, 1=day
+      float nightFactor = 1.0 - daylight;
+
+      // Base lighting mix: dayColor lit fully on day side, dimmed on night side
+      vec3 baseLit = dayColor.rgb * mix(uNightDim, 1.0, daylight);
+
+      // Optional city lights: added subtly on night side only
+      vec3 nightTex = vec3(0.0);
+      if (uUseNightTex > 0.5) {
+        vec3 tex = texture2D(uNightTex, vUv).rgb;
+        // emphasize lights but keep subtlety
+        nightTex = tex * 1.2;
+      }
+
+      // blend night lights by nightFactor and attenuate by ndotl smoothness (more at deep night)
+      float deepNight = smoothstep(0.0, 0.5, nightFactor) * smoothstep(0.0, 0.2, 1.0 - max(ndotl, 0.0));
+      vec3 color = baseLit + nightTex * deepNight * 0.6;
+
+      gl_FragColor = vec4(color, dayColor.a);
+    }
+  `;
+
+  const mat = useMemo(() => {
+    const m = new THREE.ShaderMaterial({
+      uniforms,
+      vertexShader,
+      fragmentShader,
+      transparent: false,
+      depthWrite: true,
+    });
+    m.defines = { USE_UV: '' };
+    return m;
+  }, [uniforms, vertexShader, fragmentShader]);
+
+  materialRef.current = mat;
+  return { material: mat, uniforms, materialRef };
+}
+
+function Earth({ onPointerDown, sunMode }) {
+  // Textures: day map remote, night lights local (optional)
+  const dayUrl = 'https://raw.githubusercontent.com/trekview/earth-assets/main/textures/8k_earth_daymap.jpg';
+  const lightsUrl = '/textures/earth_lights.jpg';
+
+  const [dayTex, lightsTex] = useTexture([dayUrl, lightsUrl], (tex) => {
     if (tex && tex[0]) {
       tex[0].anisotropy = 8;
       tex[0].wrapS = tex[0].wrapT = THREE.ClampToEdgeWrapping;
     }
+    if (tex && tex[1]) {
+      tex[1].anisotropy = 2;
+      tex[1].wrapS = tex[1].wrapT = THREE.RepeatWrapping;
+    }
+  });
+
+  // If lights texture fails to load, use undefined gracefully
+  const nightMap = useMemo(() => (lightsTex && lightsTex.image ? lightsTex : undefined), [lightsTex]);
+  const dayMap = useMemo(() => (dayTex && dayTex.image ? dayTex : undefined), [dayTex]);
+
+  const { material, uniforms } = useEarthShaderMaterial(dayMap, nightMap);
+
+  // Update sunDirection each frame
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime();
+    // Real-time: a slow orbit around Y axis to simulate day-night cycle
+    if (sunMode === 'real') {
+      const speed = 0.05; // radians per second
+      const a = t * speed;
+      // Sun orbiting around equatorial plane
+      uniforms.uSunDir.value.set(Math.cos(a), 0.2, Math.sin(a)).normalize();
+    } else {
+      // Fixed: gentle angled direction
+      uniforms.uSunDir.value.set(1, 0.2, 0.6).normalize();
+    }
+    uniforms.uTime.value = t;
   });
 
   return (
     <mesh onPointerDown={onPointerDown}>
-      <sphereGeometry args={[1, 64, 64]} />
-      {earthTexture ? (
-        <meshPhongMaterial map={earthTexture} />
-      ) : (
-        <meshPhongMaterial color="#3b82f6" />
-      )}
+      <sphereGeometry args={[1, 128, 128]} />
+      <primitive object={material} attach="material" />
     </mesh>
   );
 }
@@ -62,7 +180,7 @@ function CountryHighlight({ feature, getOutlineFor }) {
   );
 }
 
-function SceneContent({ onHit, onXRSupport, onCountrySelected }) {
+function SceneContent({ onHit, onXRSupport, onCountrySelected, sunMode }) {
   const { camera, gl, scene } = useThree();
   const raycasterRef = useRef(new THREE.Raycaster());
   const pointerRef = useRef(new THREE.Vector2());
@@ -74,7 +192,7 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected }) {
 
   const ambient = useMemo(() => new THREE.AmbientLight(0xffffff, 0.6), []);
   const dirLight = useMemo(() => {
-    const d = new THREE.DirectionalLight(0xffffff, 0.8);
+    const d = new THREE.DirectionalLight(0xffffff, 0.3);
     d.position.set(5, 3, 5);
     return d;
   }, []);
@@ -141,7 +259,7 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected }) {
     }
   };
 
-  // Animate slight rotation
+  // Animate slight rotation (world rotation, shader uses world normals for consistent terminator)
   useFrame((_state, delta) => {
     if (earthRef.current) {
       earthRef.current.rotation.y += delta * 0.02;
@@ -154,7 +272,7 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected }) {
       <color attach="background" args={['#0b1220']} />
       <group>
         <group ref={earthRef}>
-          <Earth onPointerDown={handlePointerDown} />
+          <Earth onPointerDown={handlePointerDown} sunMode={sunMode} />
         </group>
 
         {/* Country highlight overlay */}
@@ -180,7 +298,7 @@ function SceneContent({ onHit, onXRSupport, onCountrySelected }) {
 * Canvas container with WebXR wrapper. Exposes onHit and onXRSupport callbacks.
 */
 // PUBLIC_INTERFACE
-export default function GlobeCanvas({ onHit, onXRSupport }) {
+export default function GlobeCanvas({ onHit, onXRSupport, sunMode = 'real' }) {
   const [selectedCountry, setSelectedCountry] = useState(null);
 
   return (
@@ -198,9 +316,8 @@ export default function GlobeCanvas({ onHit, onXRSupport }) {
             onXRSupport={onXRSupport}
             onCountrySelected={(f) => {
               setSelectedCountry(f);
-              // Also emit a user-facing hit with country iso/name via onHit if desired
-              // Here we preserve existing onHit for lat/lon only and Overlay will be updated via props lifting in App if needed.
             }}
+            sunMode={sunMode}
           />
         </Canvas>
       </XR>
