@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Html, useTexture } from '@react-three/drei';
-import { XR, useXR } from '@react-three/xr';
+import { XR } from '@react-three/xr';
 import * as THREE from 'three';
+import { useCountries } from '../hooks/useCountries.js';
 
 /**
  * Convert a 3D point on a unit sphere to latitude/longitude.
@@ -36,11 +37,40 @@ function Earth({ onPointerDown }) {
   );
 }
 
-function SceneContent({ onHit, onXRSupport }) {
+function CountryHighlight({ feature, getOutlineFor }) {
+  const lineRef = useRef();
+  const glowRef = useRef();
+
+  const geometry = useMemo(() => {
+    if (!feature) return null;
+    return getOutlineFor(feature);
+  }, [feature, getOutlineFor]);
+
+  if (!feature || !geometry) return null;
+
+  return (
+    <group>
+      {/* Outline lines */}
+      <lineSegments ref={lineRef} geometry={geometry}>
+        <lineBasicMaterial color={'#F59E0B'} linewidth={2} transparent opacity={0.95} />
+      </lineSegments>
+      {/* Subtle glow using a slightly larger, translucent mesh */}
+      <lineSegments geometry={geometry} ref={glowRef} scale={[1.005, 1.005, 1.005]}>
+        <lineBasicMaterial color={'#F59E0B'} transparent opacity={0.35} />
+      </lineSegments>
+    </group>
+  );
+}
+
+function SceneContent({ onHit, onXRSupport, onCountrySelected }) {
   const { camera, gl, scene } = useThree();
   const raycasterRef = useRef(new THREE.Raycaster());
   const pointerRef = useRef(new THREE.Vector2());
   const earthRef = useRef();
+
+  // Countries data / hit testing
+  const { loaded, error, findCountryAt, getOutlineFor } = useCountries();
+  const [selected, setSelected] = useState(null);
 
   const ambient = useMemo(() => new THREE.AmbientLight(0xffffff, 0.6), []);
   const dirLight = useMemo(() => {
@@ -69,15 +99,12 @@ function SceneContent({ onHit, onXRSupport }) {
     }
   }, [onXRSupport]);
 
-  // Click handler (raycast) to compute lat/lon
+  // Click handler (raycast) to compute lat/lon and country selection
   const handlePointerDown = (e) => {
-    // Stop orbit drag on click handling
     e.stopPropagation();
 
-    const { x, y } = e.pointer || e;
     const canvas = gl.domElement;
     const rect = canvas.getBoundingClientRect();
-
     pointerRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     pointerRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
@@ -85,11 +112,31 @@ function SceneContent({ onHit, onXRSupport }) {
     const intersects = raycasterRef.current.intersectObjects(scene.children, true);
 
     if (intersects.length > 0) {
-      // Find intersect with Earth sphere
+      // Prefer the earth sphere
       const hit = intersects.find((i) => i.object.geometry?.type === 'SphereGeometry') || intersects[0];
       if (hit && hit.point) {
         const { lat, lon } = vectorToLatLon(hit.point);
-        onHit?.({ lat: Number(lat.toFixed(4)), lon: Number(lon.toFixed(4)) });
+        const rounded = { lat: Number(lat.toFixed(4)), lon: Number(lon.toFixed(4)) };
+
+        // Country lookup
+        let f = null;
+        if (loaded && !error) {
+          f = findCountryAt(rounded.lat, rounded.lon);
+          setSelected(f || null);
+          onCountrySelected?.(f || null);
+        }
+
+        // Emit to parent with country info (name/iso) if available
+        const payload = {
+          ...rounded,
+          country: f
+            ? {
+                name: f.properties?.NAME_EN || f.properties?.ADMIN || 'Unknown',
+                iso: f.properties?.ISO_A3 || '—',
+              }
+            : null,
+        };
+        onHit?.(payload);
       }
     }
   };
@@ -105,13 +152,13 @@ function SceneContent({ onHit, onXRSupport }) {
     <>
       {/* Sky background color */}
       <color attach="background" args={['#0b1220']} />
-      {/* Placeholder group for day/night shader and weather overlays */}
       <group>
         <group ref={earthRef}>
           <Earth onPointerDown={handlePointerDown} />
         </group>
-        {/* Placeholder: Day/Night terminator shader to be added */}
-        {/* Placeholder: Weather overlay meshes/particles to be added */}
+
+        {/* Country highlight overlay */}
+        {selected && <CountryHighlight feature={selected} getOutlineFor={getOutlineFor} />}
       </group>
 
       <OrbitControls
@@ -123,7 +170,7 @@ function SceneContent({ onHit, onXRSupport }) {
         minDistance={1.3}
       />
       <Html position={[0, -1.4, 0]} center distanceFactor={16} style={{ color: 'white', opacity: 0.6 }}>
-        Drag to orbit • Scroll to zoom • Click globe to get lat/lon
+        Drag to orbit • Scroll to zoom • Click to select a country
       </Html>
     </>
   );
@@ -134,6 +181,8 @@ function SceneContent({ onHit, onXRSupport }) {
 */
 // PUBLIC_INTERFACE
 export default function GlobeCanvas({ onHit, onXRSupport }) {
+  const [selectedCountry, setSelectedCountry] = useState(null);
+
   return (
     <div className="canvas-wrap" aria-label="3D globe canvas">
       {/* XR wrapper enables WebXR; session will be started via button in VRToggle */}
@@ -144,7 +193,15 @@ export default function GlobeCanvas({ onHit, onXRSupport }) {
           camera={{ fov: 45, position: [0, 1.2, 2.2] }}
           resize={{ scroll: false, debounce: { scroll: 50, resize: 0 } }}
         >
-          <SceneContent onHit={onHit} onXRSupport={onXRSupport} />
+          <SceneContent
+            onHit={onHit}
+            onXRSupport={onXRSupport}
+            onCountrySelected={(f) => {
+              setSelectedCountry(f);
+              // Also emit a user-facing hit with country iso/name via onHit if desired
+              // Here we preserve existing onHit for lat/lon only and Overlay will be updated via props lifting in App if needed.
+            }}
+          />
         </Canvas>
       </XR>
     </div>
